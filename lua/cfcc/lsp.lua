@@ -62,6 +62,7 @@ local function generate_request_param(origin_bufnr, uri)
 		return param
 	end
 	param.info = info
+
 	return param
 end
 

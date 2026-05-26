@@ -33,12 +33,13 @@ end
 function M.handle_requrest(request)
 	local info = request.info
 	local from_header = request.origin == request.header
-	local func_nodes, full_match_id =
-		ast.search_function(request.target, { bufnr = request.origin, node = request.info.func })
+	local func_nodes, full_match_id = ast.search_function(request.target, request.origin, request.info)
+
 	local messages = {}
 	for _, node in ipairs(func_nodes) do
 		table.insert(messages, ast.node_text(request.target, node))
 	end
+	-- vim.print(full_match_id)
 	-- vim.print(messages)
 
 	if full_match_id ~= 0 then
@@ -66,6 +67,23 @@ function M.handle_requrest(request)
 			end
 		end
 	)
+end
+
+local util = require("cfcc.util")
+function M.test_function()
+	if vim.fn.mode() == "v" then
+		local nodes = util.func.from_selection()
+		if not nodes then
+			vim.notify("can't find functions from selection")
+		end
+		--TODO: handle functions node
+	else
+		local node = util.func.current()
+		if not node then
+			vim.notify("can't find function under cursor")
+		end
+		--TODO: get fucntion node info
+	end
 end
 
 return M

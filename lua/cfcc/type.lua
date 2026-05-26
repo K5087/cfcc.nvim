@@ -1,0 +1,7 @@
+---@class FunctionInfo
+---@field func TSNode function declarator
+---@field type TSNode return type
+---@field class TSNode? class name
+---@field namespace TSNode[] namespace name
+---@field is_declarator boolean whether
+---@field full TSNode all function body (declaration)
