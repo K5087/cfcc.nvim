@@ -1,113 +1,105 @@
 local M = {}
-local util = require("cfcc.util")
+local ts = vim.treesitter
+local debug = require("cfcc.debug")
+local get_node_text = ts.get_node_text
+-----------------------------------------ast-----------------------------------
 
----Get Node Text
----@param bufnr integer
----@param node TSNode
----@return string
-function M.node_text(bufnr, node)
-	return vim.treesitter.get_node_text(node, bufnr)
+--- Generate FucntionInfo from declaration
+--- @param info FunctionInfo
+function M.gen_from_declarator(info)
+	local node, type = M.find_ancestor(info.func, { "function_definition", "declaration", "field_declaration" })
+	if not node then
+		error("function_declarator have no support parent")
+	end
+	info.full = node
+
+	M.parse_func_name(info)
+
+	while node do
+		type = node:type()
+		if type == "namespace_definition" then
+			table.insert(info.namespace, node:field("name")[1])
+		elseif type == "class_specifier" or type == "struct_specifier" then
+			table.insert(info.class, node:field("name")[1])
+		end
+		node = node:parent()
+	end
 end
 
---- find parent node that node::type()==type
----@param node TSNode
----@param type string
----@return TSNode?
-function M.FindTypeNode(node, type)
-	---@type TSNode?
-	local cnode = node
-	while cnode do
-		if cnode:type() == type then
-			return cnode
-		end
-		cnode = cnode:parent()
-	end
-	return nil
-end
+--- Generate FunctionInfo from declaration
+--- @param ctx BufferContext
+--- @param query vim.treesitter.Query
+function M.gen_from_declaration(ctx, query)
+	local info = ctx.info
 
----Get current cursor Function Signature
----@param node TSNode
----@return FunctionInfo?
-function M.GetFunctionSign(node)
-	local info = {
-		namespace = {},
-	}
-	local fnode = M.FindTypeNode(node, "function_declarator")
-	if node then
-		info.is_declarator = true
-	else
-		fnode = M.FindTypeNode(node, "function_definition")
-		if fnode then
-			info.is_declarator = false
-		else
-			return nil
-		end
-	end
-
-	info.func = fnode
-	local type = info.func:type()
-
-	---@type TSNode?
-	local rnode = info.func:parent()
-	while rnode ~= nil do
-		type = rnode:type()
-		if type == "function_definition" then
-			info.is_declarator = false
-		end
-		if type == "declaration" or type == "field_declaration" or type == "function_definition" then
-			info.full = rnode
-			info.type = rnode:field("type")[1]
-			rnode = rnode:parent()
-			while rnode ~= nil do
-				type = rnode:type()
-				if type == "namespace_definition" then
-					table.insert(info.namespace, rnode:field("name")[1])
-				elseif type == "class_specifier" or type == "struct_specifier" then
-					info.class = rnode:field("name")[1]
-				end
-				rnode = rnode:parent()
+	for _, match in query:iter_matches(info.full, ctx.buf, 0, -1) do
+		for id, nodes in ipairs(match) do
+			local cap = query.captures[id]
+			if cap == "func" then
+				info.func = nodes[1]
 			end
-			break
 		end
-
-		rnode = rnode:parent()
 	end
-	return info
+
+	M.parse_func_name(info)
+
+	local node = info.full:parent()
+	while node do
+		local type = node:type()
+		if type == "namespace_definition" then
+			table.insert(info.namespace, node:field("name")[1])
+		elseif type == "class_specifier" or type == "struct_specifier" then
+			table.insert(info.class, node:field("name")[1])
+		end
+		node = node:parent()
+	end
 end
 
----@class MatchFuncInfo
----@field name boolean whether function name is equal
----@field params boolean whether function params are equal
-
----search buffer all function name same
----@param bufnr2 integer
----@param bufnr1 integer
----@param info FunctionInfo
----@return TSNode[],integer
-function M.search_function(bufnr2, bufnr1, info)
-	local full_match_id = 0
-	local query = vim.treesitter.query.get("cpp", "function_decls")
-	if not query then
-		vim.notify("can not find function_decl query")
-		return {}, full_match_id
+---Find an ancestor node whose type matches on of the given types.
+---@param node TSNode?
+---@param types string[]
+---@return TSNode?,string
+function M.find_ancestor(node, types)
+	while node do
+		local type = node:type()
+		if vim.tbl_contains(types, type) then
+			return node, type
+		end
+		node = node:parent()
 	end
-	local parser = vim.treesitter.get_parser(bufnr2, "cpp")
+	return nil, ""
+end
 
+--- Get buf ts tree root node
+---@param buf integer
+---@return TSNode
+function M.get_root(buf)
+	local parser = ts.get_parser(buf, "cpp")
 	if not parser then
-		vim.notify("have not find cpp parser")
-		return {}, full_match_id
+		error("have not find cpp parser")
 	end
 
 	local tree = parser:parse()[1]
-
 	if not tree then
-		vim.notify("have not find parse tree")
-		return {}, full_match_id
+		error("have not find parse tree")
 	end
-	local root = tree:root()
+
+	return tree:root()
+end
+
+---search buffer all function name same
+---@param ctx RequestContext
+---@return TSNode[],integer
+function M.search_functions(ctx)
+	local full_match_id = 0
+
+	local query = ctx.query.func
+	local origin = ctx.origin
+	local target = ctx.target
+	local root = M.get_root(target.buf)
 
 	local func_nodes = {}
-	for _, match in query:iter_matches(root, bufnr2, 0, -1) do
+	for index, match in query:iter_matches(root, target.buf, 0, -1) do
 		local decl_node
 
 		for id, nodes in ipairs(match) do
@@ -120,139 +112,188 @@ function M.search_function(bufnr2, bufnr1, info)
 		end
 
 		if decl_node then
-			--TODO: for same function should not do repeat
-			local match_info = M.is_function_equal(
-				bufnr1,
-				info.func,
-				bufnr2,
-				decl_node,
-				{ namespace = info.namespace, class = info.class }
-			)
-			if match_info.name == true then
+			local info = { namespace = {}, class = {}, func = decl_node }
+			M.gen_from_declarator(info)
+
+			local name_same, full_same = M.is_func_same(origin, { buf = target.buf, info = info })
+			if name_same then
 				table.insert(func_nodes, decl_node)
 			end
-			if match_info.params == true then
-				full_match_id = #func_nodes
+			if full_same then
+				full_match_id = index
+				target.info = info
 			end
 		end
 	end
 	return func_nodes, full_match_id
 end
 
----check node text is equal
----@param bufnr1 integer
----@param node1 TSNode
----@param bufnr2 integer
----@param node2 TSNode
-local function is_node_equal(bufnr1, node1, bufnr2, node2)
-	return vim.treesitter.get_node_text(node1, bufnr1) == vim.treesitter.get_node_text(node2, bufnr2)
-end
-
----@class NameNodeHelp function name  node help
----@field bufnr integer buffer number
----@field scope TSNode[] namespace_identifier
----@field name TSNode identifier
-
----generate name node help from function_declarator
----@param node TSNode
----@param class TSNode?
----@param namespace TSNode[]?
----@return NameNodeHelp
-local function GetNameNodeHelp(bufnr, node, class, namespace)
-	---type NameNodeHelp
-	local help = {
-		bufnr = bufnr,
-		scope = vim.list_extend({}, namespace or {}),
-		name = nil,
-	}
-
-	local decl_node = node:field("declarator")[1]
-	local type = decl_node:type()
+--- Parse definition function name to get class and namespace
+-- TODO:
+--- there have no capability to perform semantic analysis
+--- so only last scope scope_identifier fill class
+---@param info FunctionInfo
+function M.parse_func_name(info)
+	local func = info.func:field("declarator")[1]
+	local type = func:type()
 
 	if type == "identifier" or type == "field_identifier" then
-		help.name = decl_node
+		info.name = func
 	elseif type == "qualified_identifier" then
-		table.insert(help.scope, decl_node:field("scope")[1])
-		local name = decl_node:field("name")[1]
-		while name:type() ~= "identifier" do
-			table.insert(help.scope, name:field("scope")[1])
-			name = name:field("name")[1]
+		table.insert(info.namespace, func:field("scope")[1])
+		local node = func:field("name")[1]
+		while node:type() ~= "identifier" do
+			table.insert(info.namespace, node:field("scope")[1])
+			node = node:field("name")[1]
 		end
-		help.name = name
+		info.name = node
 	else
-		vim.notify("find not support declarator type " .. type)
-		help.name = decl_node
+		error("find not support declarator type " .. type)
 	end
 
-	if class then
-		table.insert(help.scope, class)
+	if #info.class == 0 and #info.namespace > 0 then
+		table.insert(info.class, info.namespace[#info.namespace])
+		table.remove(info.namespace)
 	end
-
-	return help
 end
 
----is function name help equal
----@param node1 NameNodeHelp
----@param node2 NameNodeHelp
----@param only_check_name boolean whether only check function name
-local function is_name_node_equal(node1, node2, only_check_name)
-	local bool = is_node_equal(node1.bufnr, node1.name, node2.bufnr, node2.name)
+---@param origin BufferContext
+---@param target BufferContext
+---@return boolean,boolean # name_same,full_same
+function M.is_func_same(origin, target)
+	local name_same = false
+	local full_same = false
 
-	if not only_check_name then
-		if #node1.scope ~= #node2.scope then
-			return false
-		end
-		for i = 1, #node1.scope do
-			local scope1 = node1.scope[i]
-			local scope2 = node2.scope[i]
-			if not is_node_equal(node1.bufnr, scope1, node2.bufnr, scope2) then
-				return false
+	-- check function name(with class)
+	if not M.is_array_same(origin.buf, origin.info.class, target.buf, target.info.class) then
+		vim.print("class")
+		return name_same, full_same
+	end
+
+	if get_node_text(origin.info.name, origin.buf) ~= get_node_text(target.info.name, target.buf) then
+		vim.print("name")
+		return name_same, full_same
+	end
+
+	name_same = true
+
+	-- check function namespace
+	if not M.is_array_same(origin.buf, origin.info.namespace, target.buf, target.info.namespace) then
+		vim.print("space")
+		return name_same, full_same
+	end
+
+	-- check function other part
+	local nodes1 = origin.info.func:named_children()
+	local nodes2 = target.info.func:named_children()
+
+	if #nodes1 ~= #nodes2 then
+		return name_same, full_same
+	end
+
+	local name_identifier = { "identifier", "field_identifier", "qualified_identifier" }
+	for i = 1, #nodes1 do
+		if not vim.tbl_contains(name_identifier, nodes1[i]:type()) then
+			if
+				not M.is_node_same(
+					origin.buf,
+					nodes1[i],
+					target.buf,
+					nodes2[i],
+					{ "optional_parameter_declaration" },
+					M.handle_ignore
+				)
+			then
+				return name_same, full_same
 			end
 		end
 	end
 
-	return bool
+	full_same = true
+
+	return name_same, full_same
 end
 
----check weathure tow function_declarator node are equal
+--- check node have same node text(ignore some type)
 ---@param bufnr1 integer
----@param node1 TSNode function_declarator
+---@param node1 TSNode
 ---@param bufnr2 integer
----@param node2 TSNode function_declarator
----@param opt {}? for info1,usually a function_declarator from source ,maybe have namespace/class scope,so put them in opts to simple matching
----@return MatchFuncInfo
-function M.is_function_equal(bufnr1, node1, bufnr2, node2, opt)
-	local match_info = {
-		name = false,
-		params = false,
-	}
+---@param node2 TSNode
+---@param ignore string[]
+---@param func function? handle ignore node
+---@return boolean
+function M.is_node_same(bufnr1, node1, bufnr2, node2, ignore, func)
+	ignore = ignore or {}
+	local type1 = node1:type()
+	local type2 = node2:type()
 
-	local name_help1
-	if opt then
-		name_help1 = GetNameNodeHelp(bufnr1, node1, opt.class, opt.namespace)
-	else
-		name_help1 = GetNameNodeHelp(bufnr1, node1)
+	if vim.tbl_contains(ignore, type1) or vim.tbl_contains(ignore, type2) then
+		if func then
+			return func(bufnr1, node1, bufnr2, node2)
+		end
+		return true
 	end
 
-	local name_help2 = GetNameNodeHelp(bufnr2, node2)
-
-	match_info.name = is_name_node_equal(name_help1, name_help2, false)
-
-	local params1 = node1:field("parameters")[1]:named_children()
-	local params2 = node2:field("parameters")[1]:named_children()
-
-	if #params1 ~= #params2 then
-		return match_info
+	if type1 ~= type2 then
+		return false
 	end
 
-	for i = 1, #params1 do
-		if is_node_equal(bufnr1, params1[i], bufnr2, params2[i]) == false then
-			return match_info
+	local children1 = node1:named_children()
+	local children2 = node2:named_children()
+
+	local num = #children1
+
+	if num ~= #children2 then
+		return false
+	end
+
+	if num == 0 then
+		return get_node_text(node1, bufnr1) == get_node_text(node2, bufnr2)
+	end
+
+	for i = 1, num do
+		local child1 = children1[i]
+		local child2 = children2[i]
+		if not M.is_node_same(bufnr1, child1, bufnr2, child2, ignore, func) then
+			return false
 		end
 	end
 
-	match_info.params = true
-	return match_info
+	return true
+end
+
+--- handle ignore node
+---@param bufnr1 integer
+---@param node1 TSNode
+---@param bufnr2 integer
+---@param node2 TSNode
+---@return boolean
+function M.handle_ignore(bufnr1, node1, bufnr2, node2)
+	local children1 = M.param_named_children(node1)
+	local children2 = M.param_named_children(node2)
+
+	for i = 1, #children1 do
+		local child1 = children1[i]
+		local child2 = children2[i]
+		if get_node_text(child1, bufnr1) ~= get_node_text(child2, bufnr2) then
+			return false
+		end
+	end
+	return true
+end
+
+--- Return a list of nodes named children (remove option param default_value)
+---@param node TSNode
+---@return TSNode[]
+function M.param_named_children(node)
+	local children = node:named_children()
+	if not (node:type() == "optional_parameter_declaration") then
+		return children
+	end
+	local default = node:field("default_value")[1]
+	return vim.tbl_filter(function(item)
+		return not default:equal(item)
+	end, children)
 end
 
 --TODD: maybe hvae bug in CRLF text
@@ -277,15 +318,11 @@ local function pos_to_offset(bufnr, root, row, col)
 	return offset
 end
 
----@class DeleteParamHelp which nodes that between last and end should be delete (just for lsp help)
----@field last TSNode  last keep node
----@field final TSNode end node
-
 ---get a array that all optional_parameter_declaration node default should delete
 ---@param bufnr integer
 ---@param full TSNode  declaration / field_declaration / function_definition
 ---@param func TSNode function_declarator
-function M.get_del_optparam_ranges2(bufnr, full, func)
+function M.get_del_optparam_ranges(bufnr, full, func)
 	---@type DeleteParamHelp[]
 	local optional_param_nodes = {}
 	local query = vim.treesitter.query.get("cpp", "optional_parameter_declaration")
@@ -295,7 +332,7 @@ function M.get_del_optparam_ranges2(bufnr, full, func)
 	end
 	for _, match in query:iter_matches(full, bufnr, 0, -1) do
 		local param = {}
-		for id, nodes in ipairs(match) do
+		for id, nodes in pairs(match) do
 			local cap = query.captures[id]
 			if cap == "param" then
 				param.final = nodes[1]
@@ -329,69 +366,117 @@ function M.get_del_optparam_ranges2(bufnr, full, func)
 	return del_ranges
 end
 
----Get function info from node
----@param node TSNode function_declarator
----@return is_declarator,FunctionInfo?
-function M.get_function_info(node)
-	local info = {
-		namespace = {},
-	}
-	local fnode = M.FindTypeNode(node, "function_declarator")
-	if node then
-		info.is_declarator = true
-	else
-		fnode = M.FindTypeNode(node, "function_definition")
-		if fnode then
-			info.is_declarator = false
-		else
-			return nil
-		end
+--- Whether TSNode array is same
+---@param bufnr1 integer
+---@param array1 TSNode[]
+---@param bufnr2 integer
+---@param array2 TSNode
+---@return boolean
+function M.is_array_same(bufnr1, array1, bufnr2, array2)
+	if #array1 ~= #array2 then
+		vim.print("num")
+		return false
 	end
 
-	info.func = fnode
-	local type = info.func:type()
-
-	---@type TSNode?
-	local rnode = info.func:parent()
-	while rnode ~= nil do
-		type = rnode:type()
-		if type == "function_definition" then
-			info.is_declarator = false
+	for i = 1, #array1 do
+		if get_node_text(array1[i], bufnr1) ~= get_node_text(array2[i], bufnr2) then
+			return false
 		end
-		if type == "declaration" or type == "field_declaration" or type == "function_definition" then
-			info.full = rnode
-			info.type = rnode:field("type")[1]
-			rnode = rnode:parent()
-			while rnode ~= nil do
-				type = rnode:type()
-				if type == "namespace_definition" then
-					table.insert(info.namespace, rnode:field("name")[1])
-				elseif type == "class_specifier" or type == "struct_specifier" then
-					info.class = rnode:field("name")[1]
-				end
-				rnode = rnode:parent()
-			end
-			break
-		end
-
-		rnode = rnode:parent()
 	end
-	return info
+	return true
 end
 
------------------------------------------ast-----------------------------------
----Find an ancestor node whose type matches on of the given types.
----@param node TSNode?
----@param types string[]
----@return TSNode?
-function M.find_ancestor(node, types)
-	while node do
-		if vim.tbl_contains(types, node:type()) then
-			return node
+--- Find target have namespace
+--- return array what have find
+---@param bufnr1 integer ndoes of array buffer handle
+---@param array TSNode[]
+---@param bufnr2 integer serached buffer handle
+---@param query vim.treesitter.Query
+---@return TSNode[]
+function M.find_namespace(bufnr1, array, bufnr2, query)
+	local root = M.get_root(bufnr2)
+	local index = 1
+	---@type TSNode[]
+	local res = {}
+	local names = {}
+	local body
+	for _, match in query:iter_matches(root, bufnr2, 1, -1) do
+		for id, nodes in pairs(match) do
+			local cap = query.captures[id]
+			if cap == "name" then
+				names = nodes
+			elseif cap == "body" then
+				body = nodes[1]
+			else
+				error("why namespace query have unknown captures")
+			end
 		end
-		node = node:parent()
+		for _, name in ipairs(names) do
+			if get_node_text(name, bufnr2) == get_node_text(array[index], bufnr1) then
+				table.insert(res, name)
+				index = index + 1
+			else
+				index = index > 1 and index - 1 or 1
+				table.remove(res)
+				break
+			end
+		end
+		while index > 1 do
+			if res[index]:field("body")[1] then
+			end
+		end
 	end
-	return nil
+	return {}
+end
+
+--- Find target have namespace
+--- return array what have find
+---@param bufnr1 integer ndoes of array buffer handle
+---@param names TSNode[] namespace names
+---@param bufnr2 integer serached buffer handle
+---@param root TSNode
+---@param query vim.treesitter.Query
+---@param index integer
+---@param res TSNode[] find result
+function M.find_namespaces(bufnr1, names1, bufnr2, root, query, index, res)
+	---@type TSNode[]
+	for _, match in query:iter_matches(root, bufnr2, 1, -1) do
+		local namespace
+		local names2 = {}
+		local body
+		for id, nodes in pairs(match) do
+			local cap = query.captures[id]
+			if cap == "name" then
+				names2 = nodes
+			elseif cap == "namespace" then
+				namespace = nodes[1]
+			elseif cap == "body" then
+				body = nodes[1]
+			else
+				error("why namespace query have unknown captures")
+			end
+		end
+		for _, name in ipairs(names2) do
+			if get_node_text(name, bufnr2) == get_node_text(names1[index + 1], bufnr1) then
+				table.insert(res, namespace)
+				index = index + 1
+			else
+				index = index > 0 and index - 1 or 0
+				table.remove(res)
+				break
+			end
+		end
+		while index > 0 do
+			local body = res[index]:field("body")[1]
+			if body then
+				M.find_namespaces(bufnr1, names, bufnr2, body, query, index, res)
+			else
+				index = index - 1
+				table.remove(res)
+			end
+		end
+	end
+	return {}
 end
 
 return M

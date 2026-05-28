@@ -1,89 +1,102 @@
 local M = {}
 local lsp = require("cfcc.lsp")
 local ast = require("cfcc.ast")
+local util = require("cfcc.util")
+local api = vim.api
 
-function M.check_func_sign()
-	local bufnr = vim.api.nvim_get_current_buf()
-	local clients = vim.lsp.get_clients({ bufnr = bufnr, name = "clangd" })
-	if #clients < 1 then
-		vim.notify("cannot find clangd client")
+function M.code_action()
+	local ok, ctx = pcall(util.current)
+	if not ok then
+		---@diagnostic disable-next-line: param-type-mismatch
+		vim.notify(ctx)
 		return
 	end
 
-	local clangd_client = clients[1]
-
-	local node = vim.treesitter.get_node({ bufnr = bufnr })
-	if not node then
-		vim.notify("current cursor have no treesitter node")
-		return
-	end
-
-	local info = ast.GetFunctionSign(node)
-	if not info then
-		vim.notify("cannot find function signature")
-		return
-	end
-
-	-- local text = ast.node_text(info.function_declarator, bufnr)
-	lsp.edit_target(bufnr, clangd_client, M.handle_requrest)
+	-- generate declatator/definition on header/soruce
+	-- copy function text to paste
+	-- change function declatator/definition to make params same
+	vim.ui.select({
+		"generate declarator/definition on header/source",
+		"copy function text",
+		"sync function declarator/definition",
+	}, { prompt = "select a code action" }, function(_, idx)
+		if idx == 1 then
+			M.gen_func(ctx)
+		elseif idx == 2 then
+			M.copy_func(ctx)
+		elseif idx == 3 then
+			M.sync_func(ctx)
+		end
+	end)
 end
 
---- handle request
----@param request RequestInfo
-function M.handle_requrest(request)
-	local info = request.info
-	local from_header = request.origin == request.header
-	local func_nodes, full_match_id = ast.search_function(request.target, request.origin, request.info)
+--- generate function on target file
+---@param ctx RequestContext
+function M.gen_func(ctx)
+	--TODO: should use coroutine rebuild
+	lsp.get_target(ctx, M.get_target_callback)
+end
 
-	local messages = {}
-	for _, node in ipairs(func_nodes) do
-		table.insert(messages, ast.node_text(request.target, node))
+--- Use clangd get target file callback,and do something
+--- @param ctx RequestContext
+--- @param uri string
+function M.get_target_callback(ctx, uri)
+	local origin = ctx.origin
+	local target = ctx.target
+	local path = vim.uri_to_fname(uri)
+	if not vim.fn.filewritable(path) then
+		if vim.fn.confirm(path .. "not exist,whether create it", "&yes\n&no") then
+			local dir = vim.fn.fnamemodify(path, ":h")
+			vim.fn.mkdir(dir, "p")
+			vim.fn.writefile({}, path)
+		else
+			return
+		end
 	end
-	-- vim.print(full_match_id)
-	-- vim.print(messages)
+	target.buf = vim.fn.bufadd(path)
+	vim.fn.bufload(target.buf)
 
-	if full_match_id ~= 0 then
-		vim.notify("there has declatator and definition in header/source file")
-		return
-	end
+	-- should care about change that from other software change
+	-- vim.api.nvim_buf_call(target.buf, function()
+	-- 	vim.cmd("checktime")
+	-- end)
 
-	vim.ui.select(
-		{ "generate declarator in header", "generate definition in source" },
-		{ prompt = "select a action" },
-		function(item, idx)
-			if idx == 1 then
-				if info.is_declarator == true and from_header then
-					vim.notify("there has a function declatator in header")
-					return
-				end
+	local is_header = lsp.is_header(api.nvim_buf_get_name(origin.buf))
+	local is_declarator = util.is_declarator(origin.info)
 
-				lsp.generate_declarator_on_header(request)
-			elseif idx == 2 then
-				if info.is_declarator == false and not from_header then
-					vim.notify("there has a function definition in source")
-					return
-				end
-				lsp.generate_definition_on_source(request)
+	if is_header then
+		if is_declarator then
+			if lsp.have_definition(ctx) then
+				vim.notify("has definition on source")
+			else
+				lsp.gen_definition_on_source(ctx)
+			end
+		else
+			-- clangd have support move definition to source
+			vim.notify("clangd support mvoe definition to source")
+			return
+		end
+	else
+		if is_declarator then
+			--- do nothing
+			--- should move declarator to header?
+			--- lsp.gen_declarator_on_header()
+		else
+			if lsp.have_definition(ctx) then
+				vim.notify("has declatator on header")
+			else
+				lsp.gen_declarator_on_header(ctx)
 			end
 		end
-	)
-end
-
-local util = require("cfcc.util")
-function M.test_function()
-	if vim.fn.mode() == "v" then
-		local nodes = util.func.from_selection()
-		if not nodes then
-			vim.notify("can't find functions from selection")
-		end
-		--TODO: handle functions node
-	else
-		local node = util.func.current()
-		if not node then
-			vim.notify("can't find function under cursor")
-		end
-		--TODO: get fucntion node info
 	end
 end
+
+---@param ctx RequestContext
+function M.copy_func(ctx)
+	local text = lsp.gen_func_text(ctx.origin)
+	vim.fn.setreg('"', text)
+end
+---@param ctx RequestContext
+function M.sync_func(ctx) end
 
 return M
