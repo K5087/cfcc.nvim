@@ -1,4 +1,5 @@
 local M = {}
+local ts = vim.treesitter
 local get_node_text = vim.treesitter.get_node_text
 
 ---comment
@@ -30,5 +31,16 @@ function M.debug_ctx(ctx)
 	M.print_array(ctx.buf, ctx.info.namespace)
 	M.print_array(ctx.buf, ctx.info.class)
 	print(get_node_text(ctx.info.name, ctx.buf))
+end
+
+function M.debug_query(buf, name, root)
+	local query = assert(ts.query.get("cpp", name), "no query")
+	for _, match in query:iter_matches(root, buf, 0, -1) do
+		for id, nodes in pairs(match) do
+			local cap = query.captures[id]
+			vim.print("------------" .. cap .. "-------------")
+			M.print_array(buf, nodes)
+		end
+	end
 end
 return M

@@ -93,8 +93,14 @@ end
 
 ---@param ctx RequestContext
 function M.copy_func(ctx)
-	local text = lsp.gen_func_text(ctx.origin)
-	vim.fn.setreg('"', text)
+	local text
+	if util.is_declarator(ctx.origin.info) then
+		text = lsp.gen_def_from_decl(ctx.origin)
+	else
+		text = lsp.gen_decl_from_def(ctx.origin)
+	end
+	-- vim.fn.setreg('"', text)
+	vim.print(text)
 end
 ---@param ctx RequestContext
 function M.sync_func(ctx) end

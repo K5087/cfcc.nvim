@@ -1,6 +1,6 @@
 ---@class FunctionInfo
 ---@field func TSNode function declarator
----@field name TSNode
+---@field name TSNode function name
 ---@field class TSNode[] class name
 ---@field namespace TSNode[] namespace name
 ---@field is_declarator boolean whether
@@ -12,7 +12,8 @@
 
 ---@class QueryContext
 ---@field func vim.treesitter.Query
----@field namesapce vim.treesitter.Query
+---@field namespace vim.treesitter.Query
+---@field class vim.treesitter.Query
 
 ---@class RequestContext
 ---@field origin BufferContext

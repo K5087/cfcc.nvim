@@ -297,7 +297,14 @@ function M.param_named_children(node)
 end
 
 --TODD: maybe hvae bug in CRLF text
-local function pos_to_offset(bufnr, root, row, col)
+--- Get row and col offset releative root node
+--- Is zero-based
+---@param bufnr integer
+---@param root TSNode
+---@param row integer
+---@param col integer
+---@return integer
+function M.pos_to_offset(bufnr, root, row, col)
 	local rs, cs = root:start()
 	local lines = vim.api.nvim_buf_get_lines(bufnr, rs, row + 1, false)
 
@@ -342,8 +349,6 @@ function M.get_del_optparam_ranges(bufnr, full, func)
 		end
 		table.insert(optional_param_nodes, param)
 	end
-	-- remove function declarator end of ;
-	table.insert(optional_param_nodes, { last = func, final = full })
 
 	local del_ranges = {}
 	for _, nodes in ipairs(optional_param_nodes) do
@@ -353,8 +358,8 @@ function M.get_del_optparam_ranges(bufnr, full, func)
 		local _, _, f_erow, f_ecol = nodes.final:range()
 
 		-- 0-base, but this is [s,e)
-		local s = pos_to_offset(bufnr, full, l_erow, l_ecol)
-		local e = pos_to_offset(bufnr, full, f_erow, f_ecol)
+		local s = M.pos_to_offset(bufnr, full, l_erow, l_ecol)
+		local e = M.pos_to_offset(bufnr, full, f_erow, f_ecol)
 
 		-- convert to lua 1-base,should delete [s+1,e]
 		table.insert(del_ranges, {
@@ -389,65 +394,46 @@ end
 --- Find target have namespace
 --- return array what have find
 ---@param bufnr1 integer ndoes of array buffer handle
----@param array TSNode[]
+---@param names1 TSNode[]
 ---@param bufnr2 integer serached buffer handle
 ---@param query vim.treesitter.Query
 ---@return TSNode[]
-function M.find_namespace(bufnr1, array, bufnr2, query)
+function M.find_namespace(bufnr1, names1, bufnr2, query)
 	local root = M.get_root(bufnr2)
-	local index = 1
-	---@type TSNode[]
+	local index = 0
 	local res = {}
-	local names = {}
-	local body
-	for _, match in query:iter_matches(root, bufnr2, 1, -1) do
-		for id, nodes in pairs(match) do
-			local cap = query.captures[id]
-			if cap == "name" then
-				names = nodes
-			elseif cap == "body" then
-				body = nodes[1]
-			else
-				error("why namespace query have unknown captures")
-			end
-		end
-		for _, name in ipairs(names) do
-			if get_node_text(name, bufnr2) == get_node_text(array[index], bufnr1) then
-				table.insert(res, name)
-				index = index + 1
-			else
-				index = index > 1 and index - 1 or 1
-				table.remove(res)
-				break
-			end
-		end
-		while index > 1 do
-			if res[index]:field("body")[1] then
-			end
-		end
-	end
-	return {}
+
+	local bool = M.find_namespaces(bufnr1, names1, bufnr2, root, query, index, res)
+	vim.print(tostring(bool))
+	return res
 end
 
 --- Find target have namespace
 --- return array what have find
 ---@param bufnr1 integer ndoes of array buffer handle
----@param names TSNode[] namespace names
+---@param names1 TSNode[] namespace names
 ---@param bufnr2 integer serached buffer handle
 ---@param root TSNode
 ---@param query vim.treesitter.Query
 ---@param index integer
----@param res TSNode[] find result
+---@param res TSNode[] result array
+---@return boolean
 function M.find_namespaces(bufnr1, names1, bufnr2, root, query, index, res)
-	---@type TSNode[]
-	for _, match in query:iter_matches(root, bufnr2, 1, -1) do
+	for _, match in query:iter_matches(root, bufnr2, 0, -1) do
 		local namespace
 		local names2 = {}
 		local body
 		for id, nodes in pairs(match) do
 			local cap = query.captures[id]
 			if cap == "name" then
-				names2 = nodes
+				local type = nodes[1]:type()
+				if type == "namespace_identifier" then
+					table.insert(names2, nodes[1])
+				elseif type == "nested_namespace_specifier" then
+					vim.list_extend(names2, nodes[1]:named_children())
+				else
+					error("unknown namespace identifier")
+				end
 			elseif cap == "namespace" then
 				namespace = nodes[1]
 			elseif cap == "body" then
@@ -456,27 +442,91 @@ function M.find_namespaces(bufnr1, names1, bufnr2, root, query, index, res)
 				error("why namespace query have unknown captures")
 			end
 		end
+
+		local save = index
+		-- find in namespace_definition name field
 		for _, name in ipairs(names2) do
 			if get_node_text(name, bufnr2) == get_node_text(names1[index + 1], bufnr1) then
 				table.insert(res, namespace)
 				index = index + 1
+				if index == #names1 then
+					-- names2 is long than names1,
+					if #names2 + save > #names1 then
+						goto back
+					end
+					return true
+				end
 			else
-				index = index > 0 and index - 1 or 0
-				table.remove(res)
-				break
+				-- names2 have wrong level,skip this match
+				-- remove added node
+				goto back
 			end
 		end
-		while index > 0 do
-			local body = res[index]:field("body")[1]
-			if body then
-				M.find_namespaces(bufnr1, names, bufnr2, body, query, index, res)
-			else
-				index = index - 1
-				table.remove(res)
-			end
+
+		-- go to here ,have right level prefix,but still find remain
+		if M.find_namespaces(bufnr1, names1, bufnr2, body, query, index, res) then
+			return true
+		else
+			goto back
+		end
+
+		::back::
+		for _ = 1, index - save do
+			table.remove(res)
+			index = save
 		end
 	end
-	return {}
+	return false
+end
+
+--- Find target have namespace
+--- return array what have find
+---@param bufnr1 integer ndoes of array buffer handle
+---@param names1 TSNode[] namespace names
+---@param bufnr2 integer serached buffer handle
+---@param root TSNode
+---@param query vim.treesitter.Query
+---@param index integer
+---@return boolean
+function M.find_class(bufnr1, names1, bufnr2, root, query, index, res)
+	for _, match in query:iter_matches(root, bufnr2, 0, -1) do
+		local class
+		local name
+		local body
+		for id, nodes in pairs(match) do
+			local cap = query.captures[id]
+			if cap == "class" then
+				class = nodes[1]
+			elseif cap == "name" then
+				name = nodes[1]
+			elseif cap == "body" then
+				body = nodes[1]
+			else
+				error("why namespace query have unknown captures")
+			end
+		end
+
+		if get_node_text(name, bufnr2) == get_node_text(names1[index + 1], bufnr1) then
+			table.insert(res, class)
+			index = index + 1
+
+			if index == #names1 then
+				return true
+			end
+		else
+			return false
+		end
+
+		-- go to here ,have right level prefix,but still find remain
+		if M.find_class(bufnr1, names1, bufnr2, body, query, index, res) then
+			return true
+		else
+			table.remove(res)
+			index = index - 1
+		end
+	end
+
+	return false
 end
 
 return M
