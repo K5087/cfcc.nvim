@@ -1,36 +1,43 @@
 local M = {}
-local lsp = require("cfcc.lsp")
-local ast = require("cfcc.ast")
-local util = require("cfcc.util")
 local api = vim.api
+local lsp = require("cfcc.lsp")
+local util = require("cfcc.util")
 
-function M.code_action()
+--- Execute code_action
+---@param index integer? which action want to do
+function M.code_action(index)
 	local ok, ctx = pcall(util.current)
 	if not ok then
 		---@diagnostic disable-next-line: param-type-mismatch
 		vim.notify(ctx)
 		return
 	end
-
-	-- generate declatator/definition on header/soruce
-	-- copy function text to paste
-	-- change function declatator/definition to make params same
-	vim.ui.select({
-		"generate declarator/definition on header/source",
-		"copy function text",
-		"sync function declarator/definition",
-	}, { prompt = "select a code action" }, function(_, idx)
-		if idx == 1 then
+	if not index then
+		vim.ui.select({
+			"generate declarator/definition on header/source",
+			"copy function text",
+			"sync function declarator/definition",
+		}, { prompt = "select a code action" }, function(_, idx)
+			if idx == 1 then
+				M.gen_func(ctx)
+			elseif idx == 2 then
+				M.copy_func(ctx, false)
+			elseif idx == 3 then
+				M.sync_func(ctx)
+			end
+		end)
+	else
+		if index == 1 then
 			M.gen_func(ctx)
-		elseif idx == 2 then
-			M.copy_func(ctx)
-		elseif idx == 3 then
+		elseif index == 2 then
+			M.copy_func(ctx, false)
+		elseif index == 3 then
 			M.sync_func(ctx)
 		end
-	end)
+	end
 end
 
---- generate function on target file
+--- Generate function on target file
 ---@param ctx RequestContext
 function M.gen_func(ctx)
 	--TODO: should use coroutine rebuild
@@ -63,6 +70,7 @@ function M.get_target_callback(ctx, uri)
 
 	local is_header = lsp.is_header(api.nvim_buf_get_name(origin.buf))
 	local is_declarator = util.is_declarator(origin.info)
+	ctx.cache = lsp.simple_analysis(is_header and origin.buf or target.buf, ctx.query.class, ctx.query.namespace)
 
 	if is_header then
 		if is_declarator then
@@ -81,6 +89,7 @@ function M.get_target_callback(ctx, uri)
 			--- do nothing
 			--- should move declarator to header?
 			--- lsp.gen_declarator_on_header()
+			--- lsp.gen_definition_on_source()
 		else
 			if lsp.have_definition(ctx) then
 				vim.notify("has declatator on header")
@@ -91,18 +100,29 @@ function M.get_target_callback(ctx, uri)
 	end
 end
 
+--- Copu func text
 ---@param ctx RequestContext
-function M.copy_func(ctx)
+---@param bool boolean
+function M.copy_func(ctx, bool)
+	bool = bool or false
 	local text
-	if util.is_declarator(ctx.origin.info) then
-		text = lsp.gen_def_from_decl(ctx.origin)
+	if bool then
+		if util.is_declarator(ctx.origin.info) then
+			text = lsp.gen_def_from_decl(ctx.origin)
+		else
+			text = lsp.gen_decl_from_def(ctx.origin)
+		end
 	else
-		text = lsp.gen_decl_from_def(ctx.origin)
+		text = vim.treesitter.get_node_text(ctx.origin.info.full, ctx.origin.buf)
 	end
-	-- vim.fn.setreg('"', text)
-	vim.print(text)
+
+	vim.fn.setreg('"', text)
 end
+
+--- TODO: impl sync func and select mode
 ---@param ctx RequestContext
-function M.sync_func(ctx) end
+function M.sync_func(ctx)
+	vim.notify("waiting development")
+end
 
 return M

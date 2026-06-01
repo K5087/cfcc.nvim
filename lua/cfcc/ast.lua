@@ -1,29 +1,18 @@
 local M = {}
 local ts = vim.treesitter
-local debug = require("cfcc.debug")
 local get_node_text = ts.get_node_text
 -----------------------------------------ast-----------------------------------
 
 --- Generate FucntionInfo from declaration
 --- @param info FunctionInfo
 function M.gen_from_declarator(info)
-	local node, type = M.find_ancestor(info.func, { "function_definition", "declaration", "field_declaration" })
+	local node, _ = M.find_ancestor(info.func, { "function_definition", "declaration", "field_declaration" })
 	if not node then
 		error("function_declarator have no support parent")
 	end
 	info.full = node
 
 	M.parse_func_name(info)
-
-	while node do
-		type = node:type()
-		if type == "namespace_definition" then
-			table.insert(info.namespace, node:field("name")[1])
-		elseif type == "class_specifier" or type == "struct_specifier" then
-			table.insert(info.class, node:field("name")[1])
-		end
-		node = node:parent()
-	end
 end
 
 --- Generate FunctionInfo from declaration
@@ -42,17 +31,6 @@ function M.gen_from_declaration(ctx, query)
 	end
 
 	M.parse_func_name(info)
-
-	local node = info.full:parent()
-	while node do
-		local type = node:type()
-		if type == "namespace_definition" then
-			table.insert(info.namespace, node:field("name")[1])
-		elseif type == "class_specifier" or type == "struct_specifier" then
-			table.insert(info.class, node:field("name")[1])
-		end
-		node = node:parent()
-	end
 end
 
 ---Find an ancestor node whose type matches on of the given types.
@@ -112,16 +90,17 @@ function M.search_functions(ctx)
 		end
 
 		if decl_node then
-			local info = { namespace = {}, class = {}, func = decl_node }
-			M.gen_from_declarator(info)
+			local target_ctx = { buf = target.buf, info = { namespace = {}, class = {}, scope = {}, func = decl_node } }
+			M.gen_from_declarator(target_ctx.info)
+			M.parse_func(target_ctx, ctx.cache)
 
-			local name_same, full_same = M.is_func_same(origin, { buf = target.buf, info = info })
+			local name_same, full_same = M.is_func_same(origin, target_ctx)
 			if name_same then
 				table.insert(func_nodes, decl_node)
 			end
 			if full_same then
 				full_match_id = index
-				target.info = info
+				target.info = target_ctx.info
 			end
 		end
 	end
@@ -131,19 +110,18 @@ end
 --- Parse definition function name to get class and namespace
 -- TODO:
 --- there have no capability to perform semantic analysis
---- so only last scope scope_identifier fill class
 ---@param info FunctionInfo
 function M.parse_func_name(info)
 	local func = info.func:field("declarator")[1]
 	local type = func:type()
 
+	--- function name
 	if type == "identifier" or type == "field_identifier" then
 		info.name = func
 	elseif type == "qualified_identifier" then
-		table.insert(info.namespace, func:field("scope")[1])
-		local node = func:field("name")[1]
+		local node = func
 		while node:type() ~= "identifier" do
-			table.insert(info.namespace, node:field("scope")[1])
+			table.insert(info.scope, node:field("scope")[1])
 			node = node:field("name")[1]
 		end
 		info.name = node
@@ -151,9 +129,27 @@ function M.parse_func_name(info)
 		error("find not support declarator type " .. type)
 	end
 
-	if #info.class == 0 and #info.namespace > 0 then
-		table.insert(info.class, info.namespace[#info.namespace])
-		table.remove(info.namespace)
+	--- outer namespace
+	local node = info.full:parent()
+	while node do
+		type = node:type()
+		if type == "namespace_definition" then
+			local name = node:field("name")[1]
+			local name_type = name:type()
+			if name_type == "namespace_identifier" then
+				table.insert(info.namespace, 1, name)
+			elseif name_type == "nested_namespace_specifier" then
+				local children = name:named_children()
+				for i = #children, 1, -1 do
+					table.insert(info.namespace, 1, children[i])
+				end
+			else
+				error("unknown namespace identifier")
+			end
+		elseif type == "class_specifier" or type == "struct_specifier" then
+			table.insert(info.class, 1, node:field("name")[1])
+		end
+		node = node:parent()
 	end
 end
 
@@ -166,12 +162,10 @@ function M.is_func_same(origin, target)
 
 	-- check function name(with class)
 	if not M.is_array_same(origin.buf, origin.info.class, target.buf, target.info.class) then
-		vim.print("class")
 		return name_same, full_same
 	end
 
 	if get_node_text(origin.info.name, origin.buf) ~= get_node_text(target.info.name, target.buf) then
-		vim.print("name")
 		return name_same, full_same
 	end
 
@@ -179,7 +173,6 @@ function M.is_func_same(origin, target)
 
 	-- check function namespace
 	if not M.is_array_same(origin.buf, origin.info.namespace, target.buf, target.info.namespace) then
-		vim.print("space")
 		return name_same, full_same
 	end
 
@@ -325,52 +318,6 @@ function M.pos_to_offset(bufnr, root, row, col)
 	return offset
 end
 
----get a array that all optional_parameter_declaration node default should delete
----@param bufnr integer
----@param full TSNode  declaration / field_declaration / function_definition
----@param func TSNode function_declarator
-function M.get_del_optparam_ranges(bufnr, full, func)
-	---@type DeleteParamHelp[]
-	local optional_param_nodes = {}
-	local query = vim.treesitter.query.get("cpp", "optional_parameter_declaration")
-	if not query then
-		vim.notify("can not find optional_parameter_declaration query")
-		return {}
-	end
-	for _, match in query:iter_matches(full, bufnr, 0, -1) do
-		local param = {}
-		for id, nodes in pairs(match) do
-			local cap = query.captures[id]
-			if cap == "param" then
-				param.final = nodes[1]
-			elseif cap == "default_value" then
-				param.last = nodes[1]:prev_named_sibling()
-			end
-		end
-		table.insert(optional_param_nodes, param)
-	end
-
-	local del_ranges = {}
-	for _, nodes in ipairs(optional_param_nodes) do
-		-- local l_srow, l_scol, l_erow, l_ecol = nodes.last:range()
-		-- local d_srow, d_scol, d_erow, d_ecol = nodes.final:range()
-		local _, _, l_erow, l_ecol = nodes.last:range()
-		local _, _, f_erow, f_ecol = nodes.final:range()
-
-		-- 0-base, but this is [s,e)
-		local s = M.pos_to_offset(bufnr, full, l_erow, l_ecol)
-		local e = M.pos_to_offset(bufnr, full, f_erow, f_ecol)
-
-		-- convert to lua 1-base,should delete [s+1,e]
-		table.insert(del_ranges, {
-			s = s + 1,
-			e = e,
-		})
-	end
-
-	return del_ranges
-end
-
 --- Whether TSNode array is same
 ---@param bufnr1 integer
 ---@param array1 TSNode[]
@@ -379,7 +326,6 @@ end
 ---@return boolean
 function M.is_array_same(bufnr1, array1, bufnr2, array2)
 	if #array1 ~= #array2 then
-		vim.print("num")
 		return false
 	end
 
@@ -394,23 +340,6 @@ end
 --- Find target have namespace
 --- return array what have find
 ---@param bufnr1 integer ndoes of array buffer handle
----@param names1 TSNode[]
----@param bufnr2 integer serached buffer handle
----@param query vim.treesitter.Query
----@return TSNode[]
-function M.find_namespace(bufnr1, names1, bufnr2, query)
-	local root = M.get_root(bufnr2)
-	local index = 0
-	local res = {}
-
-	local bool = M.find_namespaces(bufnr1, names1, bufnr2, root, query, index, res)
-	vim.print(tostring(bool))
-	return res
-end
-
---- Find target have namespace
---- return array what have find
----@param bufnr1 integer ndoes of array buffer handle
 ---@param names1 TSNode[] namespace names
 ---@param bufnr2 integer serached buffer handle
 ---@param root TSNode
@@ -419,6 +348,10 @@ end
 ---@param res TSNode[] result array
 ---@return boolean
 function M.find_namespaces(bufnr1, names1, bufnr2, root, query, index, res)
+	if #names1 == 0 then
+		return false
+	end
+
 	for _, match in query:iter_matches(root, bufnr2, 0, -1) do
 		local namespace
 		local names2 = {}
@@ -529,4 +462,32 @@ function M.find_class(bufnr1, names1, bufnr2, root, query, index, res)
 	return false
 end
 
+-- TODO: now is text equal,should compair semantic
+--- Simple Check string have same text as namespace
+---@param buf integer
+---@param node TSNode
+---@param cache {namespace:TSNode[],class:TSNode[]}
+---@return boolean
+function M.is_namespace(buf, node, cache)
+	return vim.tbl_contains(cache.namespace, ts.get_node_text(node, buf))
+end
+
+--- TODO: this funcion should combain with parse_func_name?
+--- Simple Parse functio declarator name part
+---@param ctx BufferContext
+---@param cache {namespace:TSNode[],class:TSNode[]}
+function M.parse_func(ctx, cache)
+	local buf = ctx.buf
+	local info = ctx.info
+
+	if info.func:field("declarator")[1]:type() == "qualified_identifier" then
+		for _, node in ipairs(info.scope) do
+			if M.is_namespace(buf, node, cache) then
+				table.insert(info.namespace, node)
+			else
+				table.insert(info.class, node)
+			end
+		end
+	end
+end
 return M

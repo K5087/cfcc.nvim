@@ -28,8 +28,11 @@ end
 ---comment
 ---@param ctx BufferContext
 function M.debug_ctx(ctx)
+	vim.print("----------namespace--------------")
 	M.print_array(ctx.buf, ctx.info.namespace)
+	vim.print("----------class--------------")
 	M.print_array(ctx.buf, ctx.info.class)
+	vim.print("----------name--------------")
 	print(get_node_text(ctx.info.name, ctx.buf))
 end
 

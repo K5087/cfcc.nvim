@@ -1,8 +1,7 @@
 local M = {}
-local ast = require("cfcc.ast")
-local ts = vim.treesitter
-local debug = require("cfcc.debug")
 local api = vim.api
+local ts = vim.treesitter
+local ast = require("cfcc.ast")
 local util = require("cfcc.util")
 
 ------------------------------------------lsp-----------------------------------------
@@ -35,6 +34,7 @@ function M.get_target(ctx, func)
 			error("corresponding file cannot be determined")
 		end
 
+		-- func(ctx, result)
 		local ok, res = pcall(func, ctx, result)
 		if not ok then
 			vim.notify(res)
@@ -44,6 +44,8 @@ end
 
 ---@param ctx RequestContext
 function M.have_definition(ctx)
+	ast.parse_func(ctx.origin, ctx.cache)
+
 	local funcs, match_id = ast.search_functions(ctx)
 	-- vim.print(vim.treesitter.get_node_text(funcs[match_id], ctx.target.buf))
 	return match_id ~= 0
@@ -81,7 +83,10 @@ function M.gen_declarator_on_header(ctx)
 
 	local row, col
 	local text = { "" }
-	local sign_text = M.gen_func_text(origin)
+	local sign_text = vim.split(M.gen_decl_from_def(origin), "\n", {
+		plain = true,
+		trimempty = true,
+	})
 
 	local root = ast.get_root(buf)
 
@@ -129,7 +134,6 @@ function M.gen_declarator_on_header(ctx)
 	end
 
 	table.insert(text, "")
-	vim.print(text)
 	vim.api.nvim_buf_set_text(buf, row, col, row, col, text)
 end
 
@@ -140,7 +144,10 @@ function M.gen_definition_on_source(ctx)
 	local buf = ctx.target.buf
 	local namespace = ctx.origin.info.namespace
 
-	local sign_text = M.gen_func_text(origin, { class = true, body = true })
+	local sign_text = vim.split(M.gen_def_from_decl(origin), "\n", {
+		plain = true,
+		trimempty = true,
+	})
 
 	local nodes = {}
 	local bool = ast.find_namespaces(origin.buf, namespace, buf, ast.get_root(buf), ctx.query.namespace, 0, nodes)
@@ -178,59 +185,6 @@ function M.gen_definition_on_source(ctx)
 	vim.api.nvim_buf_set_text(buf, row, col, row, col, text)
 end
 
---- generate function signature text
----
---- ```lua
---- lsp.gen_func_text(origin,{
----    class = true, --whether add class declarator
----    body = false, -- whether add function body
---- })
---- ```
----@param ctx BufferContext
----@param opt? { class: boolean, body: boolean }
----@return string[]
-function M.gen_func_text(ctx, opt)
-	opt = opt or {}
-	local buf = ctx.buf
-	local info = ctx.info
-
-	local declaration = ts.get_node_text(info.full, buf)
-	local del_ranges = ast.get_del_optparam_ranges(buf, info.full, info.func)
-	table.insert(del_ranges, util.get_delete_range(buf, { last = info.func, final = info.full }, info.full))
-
-	-- delete text from line end
-	table.sort(del_ranges, function(a, b)
-		return a.s > b.s
-	end)
-
-	for _, r in ipairs(del_ranges) do
-		-- get [1,s-1]  [e+1,$]
-		declaration = declaration:sub(1, r.s - 1) .. declaration:sub(r.e + 1)
-	end
-
-	if opt.class and #info.class > 0 then
-		local array = {}
-		for _, class in ipairs(info.class) do
-			table.insert(array, ts.get_node_text(class, buf))
-		end
-		local name = table.concat(array, "::")
-		local row, col = info.func:range()
-		local pos = ast.pos_to_offset(buf, info.full, row, col)
-		declaration = declaration:sub(1, pos) .. name .. "::" .. declaration:sub(pos + 1)
-	end
-
-	if opt.body then
-		declaration = declaration .. "{\n\n}"
-	else
-		declaration = declaration .. ";"
-	end
-
-	return vim.split(declaration, "\n", {
-		plain = true,
-		trimempty = true,
-	})
-end
-
 --gen declarator form definition
 ---@param ctx BufferContext
 ---@return string
@@ -239,7 +193,7 @@ function M.gen_decl_from_def(ctx)
 	local info = ctx.info
 
 	local declaration = ts.get_node_text(info.full, buf)
-	local del_ranges = ast.get_del_optparam_ranges(buf, info.full, info.func)
+	local del_ranges = util.get_del_optparam_ranges(buf, info.full, info.func)
 	table.insert(del_ranges, util.get_delete_range(buf, { last = info.func, final = info.full }, info.full))
 
 	local s_row, s_col = info.func:field("declarator")[1]:range()
@@ -269,7 +223,8 @@ function M.gen_def_from_decl(ctx)
 	local info = ctx.info
 
 	local declaration = ts.get_node_text(info.full, buf)
-	local del_ranges = ast.get_del_optparam_ranges(buf, info.full, info.func)
+	local del_ranges = util.get_del_optparam_ranges(buf, info.full, info.func)
+	table.insert(del_ranges, util.get_delete_range(buf, { last = info.func, final = info.full }, info.full))
 
 	-- delete text from line end
 	table.sort(del_ranges, function(a, b)
@@ -283,7 +238,8 @@ function M.gen_def_from_decl(ctx)
 
 	if #info.class > 0 then
 		local array = {}
-		for _, class in ipairs(info.class) do
+		for i = 1, #info.class do
+			local class = info.class[i]
 			table.insert(array, ts.get_node_text(class, buf))
 		end
 		local name = table.concat(array, "::")
@@ -295,4 +251,41 @@ function M.gen_def_from_decl(ctx)
 	declaration = declaration .. "{\n\n}"
 	return declaration
 end
+
+--- Simple analysis class and namespace
+---@param buf integer
+---@param class_query vim.treesitter.Query
+---@param namespace_query vim.treesitter.Query
+---@return table
+function M.simple_analysis(buf, class_query, namespace_query)
+	local cache = { class = {}, namespace = {} }
+	local root = ast.get_root(buf)
+
+	for _, match in class_query:iter_matches(root, buf, 0, -1) do
+		for id, nodes in pairs(match) do
+			local cap = class_query.captures[id]
+			if cap == "name" then
+				table.insert(cache.class, ts.get_node_text(nodes[1], buf))
+			end
+		end
+	end
+	for _, match in namespace_query:iter_matches(root, buf, 0, -1) do
+		for id, nodes in pairs(match) do
+			local cap = namespace_query.captures[id]
+			if cap == "name" then
+				local type = nodes[1]:type()
+				if type == "namespace_identifier" then
+					table.insert(cache.namespace, ts.get_node_text(nodes[1], buf))
+				elseif type == "nested_namespace_specifier" then
+					for _, node in ipairs(nodes[1]:named_children()) do
+						table.insert(cache.namespace, ts.get_node_text(node, buf))
+					end
+				end
+			end
+		end
+	end
+
+	return cache
+end
+
 return M

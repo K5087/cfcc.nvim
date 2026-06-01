@@ -3,7 +3,7 @@ local api = vim.api
 local ts = vim.treesitter
 local ast = require("cfcc.ast")
 
----check function type is declarator or definition
+--- Check function type is declarator or definition
 ---@param info FunctionInfo
 ---@return boolean
 function M.is_declarator(info)
@@ -25,10 +25,10 @@ function M.current()
 	---@diagnostic disable: missing-fields
 	local ctx = {
 		origin = {
-			info = { namespace = {}, class = {} },
+			info = { namespace = {}, class = {}, scope = {} },
 		},
 		target = {
-			info = { namespace = {}, class = {} },
+			info = { namespace = {}, class = {}, scope = {} },
 		},
 		query = {},
 	}
@@ -51,13 +51,13 @@ function M.current()
 		ast.gen_from_declarator(info)
 	else
 		info.full = parent
-		ast.gen_from_declaration(origin, ctx.query.func)
+		ast.gen_from_declaration(ctx.origin, ctx.query.func)
 	end
 
 	return ctx
 end
 
---TODD: maybe hvae bug in CRLF text
+--- TODD: maybe hvae bug in CRLF text
 --- Get row and col offset releative root node
 --- Is zero-based
 ---@param bufnr integer
@@ -105,6 +105,35 @@ function M.get_delete_range(buf, scope, root)
 		s = s + 1,
 		e = e,
 	}
+end
+
+--- Get a array that all optional_parameter_declaration node default should delete
+---@param buf integer
+---@param full TSNode  declaration / field_declaration / function_definition
+---@param func TSNode function_declarator
+function M.get_del_optparam_ranges(buf, full, func)
+	local query = vim.treesitter.query.get("cpp", "optional_parameter_declaration")
+
+	if not query then
+		error("can not find optional_parameter_declaration query")
+	end
+
+	local del_ranges = {}
+	for _, match in query:iter_matches(full, buf, 0, -1) do
+		local param = {}
+		for id, nodes in pairs(match) do
+			local cap = query.captures[id]
+			if cap == "param" then
+				param.final = nodes[1]
+			elseif cap == "default_value" then
+				param.last = nodes[1]:prev_named_sibling()
+			end
+		end
+
+		table.insert(del_ranges, M.get_delete_range(buf, param, full))
+	end
+
+	return del_ranges
 end
 
 return M
