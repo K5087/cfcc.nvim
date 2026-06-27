@@ -10,7 +10,7 @@ local util = require("cfcc.util")
 ---@return boolean
 function M.is_header(path)
 	local ext = vim.fn.fnamemodify(path, ":e")
-	return ext == "h" or ext == "hxx"
+	return ext == "h" or ext == "hxx" or ext == "hpp"
 end
 
 --- if origin buf is header return uri path,otherwise return header uri

@@ -120,9 +120,13 @@ function M.parse_func_name(info)
 		info.name = func
 	elseif type == "qualified_identifier" then
 		local node = func
-		while node:type() ~= "identifier" do
+		while type ~= "identifier" and type ~= "operator_name" do
 			table.insert(info.scope, node:field("scope")[1])
 			node = node:field("name")[1]
+			if not node then
+				error("find function name failed")
+			end
+			type = node:type()
 		end
 		info.name = node
 	else

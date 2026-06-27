@@ -78,6 +78,7 @@ function M.get_target_callback(ctx, uri)
 				vim.notify("has definition on source")
 			else
 				lsp.gen_definition_on_source(ctx)
+				vim.api.nvim_set_current_buf(ctx.target.buf)
 			end
 		else
 			-- clangd have support move definition to source
@@ -95,6 +96,7 @@ function M.get_target_callback(ctx, uri)
 				vim.notify("has declatator on header")
 			else
 				lsp.gen_declarator_on_header(ctx)
+				vim.api.nvim_set_current_buf(ctx.target.buf)
 			end
 		end
 	end
