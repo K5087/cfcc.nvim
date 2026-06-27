@@ -116,7 +116,7 @@ function M.parse_func_name(info)
 	local type = func:type()
 
 	--- function name
-	if type == "identifier" or type == "field_identifier" then
+	if type == "identifier" or type == "field_identifier" or type == "operator_name" then
 		info.name = func
 	elseif type == "qualified_identifier" then
 		local node = func
