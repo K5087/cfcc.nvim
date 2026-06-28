@@ -5,13 +5,15 @@ local util = require("cfcc.util")
 
 --- Execute code_action
 ---@param index integer? which action want to do
-function M.code_action(index)
+---@param bool boolean
+function M.code_action(index, bool)
 	local ok, ctx = pcall(util.current)
 	if not ok then
 		---@diagnostic disable-next-line: param-type-mismatch
 		vim.notify(ctx)
 		return
 	end
+	bool = bool or false
 	if not index then
 		vim.ui.select({
 			"generate declarator/definition on header/source",
@@ -21,7 +23,7 @@ function M.code_action(index)
 			if idx == 1 then
 				M.gen_func(ctx)
 			elseif idx == 2 then
-				M.copy_func(ctx, false)
+				M.copy_func(ctx, bool)
 			elseif idx == 3 then
 				M.sync_func(ctx)
 			end
@@ -30,7 +32,7 @@ function M.code_action(index)
 		if index == 1 then
 			M.gen_func(ctx)
 		elseif index == 2 then
-			M.copy_func(ctx, false)
+			M.copy_func(ctx, bool)
 		elseif index == 3 then
 			M.sync_func(ctx)
 		end
@@ -77,8 +79,9 @@ function M.get_target_callback(ctx, uri)
 			if lsp.have_definition(ctx) then
 				vim.notify("has definition on source")
 			else
-				lsp.gen_definition_on_source(ctx)
+				local row, col = lsp.gen_definition_on_source(ctx)
 				vim.api.nvim_set_current_buf(ctx.target.buf)
+				vim.api.nvim_win_set_cursor(ctx.target.buf, row, col)
 			end
 		else
 			-- clangd have support move definition to source
@@ -95,8 +98,9 @@ function M.get_target_callback(ctx, uri)
 			if lsp.have_definition(ctx) then
 				vim.notify("has declatator on header")
 			else
-				lsp.gen_declarator_on_header(ctx)
+				local row, col = lsp.gen_declarator_on_header(ctx)
 				vim.api.nvim_set_current_buf(ctx.target.buf)
+				vim.api.nvim_win_set_cursor(ctx.target.buf, row, col)
 			end
 		end
 	end
@@ -119,6 +123,7 @@ function M.copy_func(ctx, bool)
 	end
 
 	vim.fn.setreg('"', text)
+	vim.notify(text)
 end
 
 --- TODO: impl sync func and select mode

@@ -116,11 +116,11 @@ function M.parse_func_name(info)
 	local type = func:type()
 
 	--- function name
-	if type == "identifier" or type == "field_identifier" or type == "operator_name" then
+	if type == "identifier" or type == "field_identifier" or type == "operator_name" or type == "destructor_name" then
 		info.name = func
 	elseif type == "qualified_identifier" then
 		local node = func
-		while type ~= "identifier" and type ~= "operator_name" do
+		while type ~= "identifier" and type ~= "operator_name" and type ~= "destructor_name" do
 			table.insert(info.scope, node:field("scope")[1])
 			node = node:field("name")[1]
 			if not node then

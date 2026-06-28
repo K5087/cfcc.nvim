@@ -31,6 +31,7 @@ function M.get_target(ctx, func)
 			error(tostring(err))
 		end
 		if not result then
+			--TODO: have no header/source,should provide a func create file
 			error("corresponding file cannot be determined")
 		end
 
@@ -77,6 +78,8 @@ end
 
 --- Generate declarator on header
 ---@param ctx RequestContext
+---@return integer row # cursor should in row
+---@return integer col # cursor should in col
 function M.gen_declarator_on_header(ctx)
 	local origin = ctx.origin
 	local buf = ctx.target.buf
@@ -135,10 +138,13 @@ function M.gen_declarator_on_header(ctx)
 
 	table.insert(text, "")
 	vim.api.nvim_buf_set_text(buf, row, col, row, col, text)
+	return row + 1, 0
 end
 
 --- Generate definition on source
 ---@param ctx RequestContext
+---@return integer row # cursor should in row
+---@return integer col # cursor should in col
 function M.gen_definition_on_source(ctx)
 	local origin = ctx.origin
 	local buf = ctx.target.buf
@@ -152,7 +158,7 @@ function M.gen_definition_on_source(ctx)
 	local nodes = {}
 	local bool = ast.find_namespaces(origin.buf, namespace, buf, ast.get_root(buf), ctx.query.namespace, 0, nodes)
 
-	local text = { "" }
+	local text = { "", "" }
 	local row, col
 
 	local num = #nodes
@@ -183,6 +189,7 @@ function M.gen_definition_on_source(ctx)
 
 	table.insert(text, "")
 	vim.api.nvim_buf_set_text(buf, row, col, row, col, text)
+	return row + #text, 0
 end
 
 --gen declarator form definition
