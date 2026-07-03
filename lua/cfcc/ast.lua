@@ -473,7 +473,7 @@ end
 ---@param cache {namespace:TSNode[],class:TSNode[]}
 ---@return boolean
 function M.is_namespace(buf, node, cache)
-	return vim.tbl_contains(cache.namespace, ts.get_node_text(node, buf))
+	return vim.tbl_contains(cache.namespace, get_node_text(node, buf))
 end
 
 --- TODO: this funcion should combain with parse_func_name?

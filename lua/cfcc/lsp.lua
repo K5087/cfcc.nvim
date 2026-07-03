@@ -19,11 +19,12 @@ end
 function M.get_target(ctx, func)
 	local bufnr = ctx.origin.buf
 	local clients = vim.lsp.get_clients({ bufnr = bufnr, name = "clangd" })
-	if #clients < 1 then
+
+	local client = clients[1]
+	if not client then
 		error("cannot find clangd client")
 	end
 
-	local client = clients[1]
 	local params = vim.lsp.util.make_text_document_params(bufnr)
 	---@diagnostic disable-next-line:param-type-mismatch
 	client:request("textDocument/switchSourceHeader", params, function(err, result)
@@ -54,10 +55,10 @@ end
 
 ---create namespace text
 ---@param buf integer
----@param array TSNode
----@param insert string[]?
+---@param array TSNode[]
+---@param sign_text string[]?
 ---@return string[]
-function M.create_namespace(buf, array, insert)
+function M.create_namespace(buf, array, sign_text)
 	local text = {}
 	local num = #array
 	for i = 1, num do
@@ -65,8 +66,8 @@ function M.create_namespace(buf, array, insert)
 		table.insert(text, string.format(""))
 	end
 
-	if insert then
-		vim.list_extend(text, insert)
+	if sign_text then
+		vim.list_extend(text, sign_text)
 	end
 
 	for _ = 1, num do
@@ -95,7 +96,7 @@ function M.gen_declarator_on_header(ctx)
 
 	---@type TSNode[]
 	local name_nodes = {}
-	local namespace = ctx.origin.info.namespace
+	local namespace = origin.info.namespace
 	local find_name = ast.find_namespaces(origin.buf, namespace, buf, root, ctx.query.namespace, 0, name_nodes)
 	local num = #name_nodes
 
@@ -105,7 +106,7 @@ function M.gen_declarator_on_header(ctx)
 
 	---@type TSNode[]
 	local class_nodes = {}
-	local class = ctx.origin.info.class
+	local class = origin.info.class
 	local find_class = ast.find_class(origin.buf, class, buf, root, ctx.query.class, 0, class_nodes)
 
 	if num > 0 then
@@ -118,10 +119,10 @@ function M.gen_declarator_on_header(ctx)
 				vim.list_extend(text, sign_text)
 				table.insert(text, "")
 			else
-				error("this is a bud ,need to solve,how to know a scope_identifier is class or namespace")
+				error("this is a problem ,need to solve,how to know a scope_identifier is class or namespace")
 			end
 		else
-			error("this is a bud ,need to solve,how to know a scope_identifier is class or namespace")
+			error("this is a problem ,need to solve,how to know a scope_identifier is class or namespace")
 		end
 	else
 		if find_class then
@@ -137,7 +138,7 @@ function M.gen_declarator_on_header(ctx)
 	end
 
 	table.insert(text, "")
-	vim.api.nvim_buf_set_text(buf, row, col, row, col, text)
+	api.nvim_buf_set_text(buf, row, col, row, col, text)
 	return row + 1, 0
 end
 
@@ -148,7 +149,7 @@ end
 function M.gen_definition_on_source(ctx)
 	local origin = ctx.origin
 	local buf = ctx.target.buf
-	local namespace = ctx.origin.info.namespace
+	local namespace = origin.info.namespace
 
 	local sign_text = vim.split(M.gen_def_from_decl(origin), "\n", {
 		plain = true,
@@ -188,7 +189,7 @@ function M.gen_definition_on_source(ctx)
 	end
 
 	table.insert(text, "")
-	vim.api.nvim_buf_set_text(buf, row, col, row, col, text)
+	api.nvim_buf_set_text(buf, row, col, row, col, text)
 	return row + #text, 0
 end
 
@@ -268,7 +269,7 @@ function M.gen_def_from_decl(ctx)
 
 		declaration = declaration:sub(1, s - 1) .. declaration:sub(e + 1)
 	else
- 	local s_row, s_col, _, _ = info.func:range()
+		local s_row, s_col, _, _ = info.func:range()
 		local l_row, l_col = info.full:start()
 		local s = ast.pos_to_offset(buf, info.full, l_row, l_col) + 1
 		local e = ast.pos_to_offset(buf, info.full, s_row, s_col)
@@ -283,7 +284,7 @@ end
 ---@param buf integer
 ---@param class_query vim.treesitter.Query
 ---@param namespace_query vim.treesitter.Query
----@return table
+---@return {namespace: TSNode[], class: TSNode[]}
 function M.simple_analysis(buf, class_query, namespace_query)
 	local cache = { class = {}, namespace = {} }
 	local root = ast.get_root(buf)

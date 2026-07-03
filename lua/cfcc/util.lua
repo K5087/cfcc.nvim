@@ -18,6 +18,21 @@ function M.load_query(ctx)
 	ctx.query.class = assert(ts.query.get("cpp", "class"), "load class query file failed")
 end
 
+-- Get current line nonblank position
+--- @return [integer, integer] # (row, col) tuple
+function M.get_nonblank_pos(buf)
+	local pos = api.nvim_win_get_cursor(0)
+	-- Subtract one to account for 1-based row indexing in nvim_win_get_cursor
+	local row, col = pos[1] - 1, pos[2]
+	local line = api.nvim_buf_get_lines(buf, row, row + 1, false)
+	for i = col - 1, 0, -1 do
+		if line[i] ~= " " then
+			return { row, i }
+		end
+	end
+	return { row, col }
+end
+
 --- Generate RequestContext form current cursor
 --- @return  RequestContext
 function M.current()
@@ -38,7 +53,8 @@ function M.current()
 	local origin = ctx.origin
 	local info = origin.info
 	origin.buf = api.nvim_get_current_buf()
-	local node = ts.get_node({ bufnr = ctx.origin.buf })
+	local pos = M.get_nonblank_pos(origin.buf)
+	local node = ts.get_node({ bufnr = origin.buf, pos = pos })
 
 	local parent, type =
 		ast.find_ancestor(node, { "function_declarator", "function_definition", "declaration", "field_declaration" })
@@ -51,7 +67,7 @@ function M.current()
 		ast.gen_from_declarator(info)
 	else
 		info.full = parent
-		ast.gen_from_declaration(ctx.origin, ctx.query.func)
+		ast.gen_from_declaration(origin, ctx.query.func)
 	end
 
 	return ctx
@@ -111,6 +127,7 @@ end
 ---@param buf integer
 ---@param full TSNode  declaration / field_declaration / function_definition
 ---@param func TSNode function_declarator
+---@return { s: integer, e: integer }[]
 function M.get_del_optparam_ranges(buf, full, func)
 	local query = ts.query.get("cpp", "optional_parameter_declaration")
 

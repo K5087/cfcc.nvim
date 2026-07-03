@@ -54,7 +54,7 @@ function M.get_target_callback(ctx, uri)
 	local target = ctx.target
 	local path = vim.uri_to_fname(uri)
 	if not vim.fn.filewritable(path) then
-		if vim.fn.confirm(path .. "not exist,whether create it", "&yes\n&no") then
+		if vim.fn.confirm(path .. "not exist,whether create it", "&yes\n&no") == 1 then
 			local dir = vim.fn.fnamemodify(path, ":h")
 			vim.fn.mkdir(dir, "p")
 			vim.fn.writefile({}, path)
@@ -80,8 +80,8 @@ function M.get_target_callback(ctx, uri)
 				vim.notify("has definition on source")
 			else
 				local row, col = lsp.gen_definition_on_source(ctx)
-				vim.api.nvim_set_current_buf(ctx.target.buf)
-				vim.api.nvim_win_set_cursor(ctx.target.buf, row, col)
+				api.nvim_set_current_buf(target.buf)
+				api.nvim_win_set_cursor(target.buf, { row, col })
 			end
 		else
 			-- clangd have support move definition to source
@@ -99,8 +99,8 @@ function M.get_target_callback(ctx, uri)
 				vim.notify("has declatator on header")
 			else
 				local row, col = lsp.gen_declarator_on_header(ctx)
-				vim.api.nvim_set_current_buf(ctx.target.buf)
-				vim.api.nvim_win_set_cursor(ctx.target.buf, row, col)
+				api.nvim_set_current_buf(target.buf)
+				api.nvim_win_set_cursor(target.buf, { row, col })
 			end
 		end
 	end

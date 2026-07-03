@@ -1,4 +1,4 @@
-# CFCC.Nvim
+# cfcc.nvim
 
 Cpp Function Code Action
 
