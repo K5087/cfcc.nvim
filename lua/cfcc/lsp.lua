@@ -222,6 +222,7 @@ function M.gen_decl_from_def(ctx)
 	return declaration .. ";"
 end
 
+--TODO: this function can have more simple way
 --gen definition from declarator
 ---@param ctx BufferContext
 ---@return string
@@ -256,6 +257,25 @@ function M.gen_def_from_decl(ctx)
 	end
 
 	declaration = declaration .. "{\n\n}"
+
+	--remove static inline constexpr and some other keyword
+	local type = info.full:field("type")[1]
+	if type then
+		local s_row, s_col, _, _ = type:range()
+		local l_row, l_col = info.full:start()
+		local s = ast.pos_to_offset(buf, info.full, l_row, l_col) + 1
+		local e = ast.pos_to_offset(buf, info.full, s_row, s_col)
+
+		declaration = declaration:sub(1, s - 1) .. declaration:sub(e + 1)
+	else
+ 	local s_row, s_col, _, _ = info.func:range()
+		local l_row, l_col = info.full:start()
+		local s = ast.pos_to_offset(buf, info.full, l_row, l_col) + 1
+		local e = ast.pos_to_offset(buf, info.full, s_row, s_col)
+
+		declaration = declaration:sub(1, s - 1) .. declaration:sub(e + 1)
+	end
+
 	return declaration
 end
 

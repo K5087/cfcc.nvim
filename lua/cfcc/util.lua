@@ -112,7 +112,7 @@ end
 ---@param full TSNode  declaration / field_declaration / function_definition
 ---@param func TSNode function_declarator
 function M.get_del_optparam_ranges(buf, full, func)
-	local query = vim.treesitter.query.get("cpp", "optional_parameter_declaration")
+	local query = ts.query.get("cpp", "optional_parameter_declaration")
 
 	if not query then
 		error("can not find optional_parameter_declaration query")
