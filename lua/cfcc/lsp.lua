@@ -10,7 +10,7 @@ local util = require("cfcc.util")
 ---@return boolean
 function M.is_header(path)
 	local ext = vim.fn.fnamemodify(path, ":e")
-	return ext == "h" or ext == "hxx" or ext == "hpp"
+	return ext == "h" or ext == "hxx" or ext == "hpp" or ext == "cppm"
 end
 
 --- if origin buf is header return uri path,otherwise return header uri
@@ -159,8 +159,9 @@ function M.gen_definition_on_source(ctx)
 	local nodes = {}
 	local bool = ast.find_namespaces(origin.buf, namespace, buf, ast.get_root(buf), ctx.query.namespace, 0, nodes)
 
-	local text = { "", "" }
+	local text = {}
 	local row, col
+	local edit_row = 0
 
 	local num = #nodes
 	if num > 0 then
@@ -173,8 +174,12 @@ function M.gen_definition_on_source(ctx)
 				table.insert(array, namespace[i])
 			end
 
+			table.insert(text, "")
+			edit_row = #text
 			vim.list_extend(text, M.create_namespace(origin.buf, array, sign_text))
 		else
+			table.insert(text, "")
+			edit_row = #text
 			vim.list_extend(text, sign_text)
 		end
 
@@ -182,15 +187,16 @@ function M.gen_definition_on_source(ctx)
 		_, _, row, col = body:range()
 		col = col - 1
 	else
+		table.insert(text, "")
+		edit_row = #text
 		vim.list_extend(text, M.create_namespace(origin.buf, namespace, sign_text))
 		row = api.nvim_buf_line_count(buf)
 		row = row > 0 and row - 1 or 0
 		col = #(api.nvim_buf_get_lines(buf, -2, -1, false)[1] or "")
 	end
 
-	table.insert(text, "")
 	api.nvim_buf_set_text(buf, row, col, row, col, text)
-	return row + #text, 0
+	return row + edit_row + 2, 0
 end
 
 --gen declarator form definition
@@ -204,12 +210,21 @@ function M.gen_decl_from_def(ctx)
 	local del_ranges = util.get_del_optparam_ranges(buf, info.full, info.func)
 	table.insert(del_ranges, util.get_delete_range(buf, { last = info.func, final = info.full }, info.full))
 
-	local s_row, s_col = info.func:field("declarator")[1]:range()
-	local n_row, n_col = info.name:range()
-	table.insert(del_ranges, {
-		s = util.pos_to_offset(buf, info.full, s_row, s_col) + 1,
-		e = util.pos_to_offset(buf, info.full, n_row, n_col),
-	})
+	if info.func:type() == "abstract_function_declarator" then
+		local s_row, s_col = info.full:range()
+		local n_row, n_col = info.func:parent():range()
+		table.insert(del_ranges, {
+			s = util.pos_to_offset(buf, info.full, s_row, s_col) + 1,
+			e = util.pos_to_offset(buf, info.full, n_row, n_col),
+		})
+	else
+		local s_row, s_col = info.func:field("declarator")[1]:range()
+		local n_row, n_col = info.name:range()
+		table.insert(del_ranges, {
+			s = util.pos_to_offset(buf, info.full, s_row, s_col) + 1,
+			e = util.pos_to_offset(buf, info.full, n_row, n_col),
+		})
+	end
 
 	-- delete text from line end
 	table.sort(del_ranges, function(a, b)
@@ -254,27 +269,39 @@ function M.gen_def_from_decl(ctx)
 		local name = table.concat(array, "::")
 		local row, col = info.func:range()
 		local pos = ast.pos_to_offset(buf, info.full, row, col)
-		declaration = declaration:sub(1, pos) .. name .. "::" .. declaration:sub(pos + 1)
+		if info.func:type() == "abstract_function_declarator" then
+			declaration = name .. "::" .. declaration
+		else
+			declaration = declaration:sub(1, pos) .. name .. "::" .. declaration:sub(pos + 1)
+		end
 	end
 
 	declaration = declaration .. "{\n\n}"
 
 	--remove static inline constexpr and some other keyword
-	local type = info.full:field("type")[1]
-	if type then
-		local s_row, s_col, _, _ = type:range()
-		local l_row, l_col = info.full:start()
-		local s = ast.pos_to_offset(buf, info.full, l_row, l_col) + 1
-		local e = ast.pos_to_offset(buf, info.full, s_row, s_col)
+	if info.func:type() ~= "abstract_function_declarator" then
+		local type = info.full:field("type")[1]
+		if type then
+			local s_row, s_col, _, _ = type:range()
+			local l_row, l_col = info.full:start()
+			local s = ast.pos_to_offset(buf, info.full, l_row, l_col) + 1
+			local e = ast.pos_to_offset(buf, info.full, s_row, s_col)
 
-		declaration = declaration:sub(1, s - 1) .. declaration:sub(e + 1)
-	else
-		local s_row, s_col, _, _ = info.func:range()
-		local l_row, l_col = info.full:start()
-		local s = ast.pos_to_offset(buf, info.full, l_row, l_col) + 1
-		local e = ast.pos_to_offset(buf, info.full, s_row, s_col)
+			declaration = declaration:sub(1, s - 1) .. declaration:sub(e + 1)
+		else
+			local s_row, s_col, _, _ = info.func:range()
+			local l_row, l_col = info.full:start()
+			local s = ast.pos_to_offset(buf, info.full, l_row, l_col) + 1
+			local e = ast.pos_to_offset(buf, info.full, s_row, s_col)
 
-		declaration = declaration:sub(1, s - 1) .. declaration:sub(e + 1)
+			declaration = declaration:sub(1, s - 1) .. declaration:sub(e + 1)
+		end
+
+		-- add const constexpr and some other type_qualifier
+		local qualifiers = info.full:field("type_qualifier")
+		for _, qualifier in ipairs(qualifiers) do
+			declaration = ts.get_node_text(qualifier, buf) .. " " .. declaration
+		end
 	end
 
 	return declaration

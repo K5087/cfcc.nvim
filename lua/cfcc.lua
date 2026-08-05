@@ -81,7 +81,7 @@ function M.get_target_callback(ctx, uri)
 			else
 				local row, col = lsp.gen_definition_on_source(ctx)
 				api.nvim_set_current_buf(target.buf)
-				api.nvim_win_set_cursor(target.buf, { row, col })
+				api.nvim_win_set_cursor(0, { row, col })
 			end
 		else
 			-- clangd have support move definition to source
@@ -106,7 +106,7 @@ function M.get_target_callback(ctx, uri)
 	end
 end
 
---- Copu func text
+--- Copy func text
 ---@param ctx RequestContext
 ---@param bool boolean
 function M.copy_func(ctx, bool)

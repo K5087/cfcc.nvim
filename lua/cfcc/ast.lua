@@ -1,7 +1,7 @@
 local M = {}
 local ts = vim.treesitter
 local get_node_text = ts.get_node_text
------------------------------------------ast-----------------------------------
+----------------------------------------ast-----------------------------------
 
 --- Generate FucntionInfo from declaration
 --- @param info FunctionInfo
@@ -112,7 +112,12 @@ end
 --- there have no capability to perform semantic analysis
 ---@param info FunctionInfo
 function M.parse_func_name(info)
-	local func = info.func:field("declarator")[1]
+	local func
+	if info.func:type() == "abstract_function_declarator" then
+		func = info.full:field("declarator")[1]
+	else
+		func = info.func:field("declarator")[1]
+	end
 	local type = func:type()
 
 	--- function name
@@ -124,11 +129,15 @@ function M.parse_func_name(info)
 			table.insert(info.scope, node:field("scope")[1])
 			node = node:field("name")[1]
 			if not node then
-				error("find function name failed")
+				break
+				-- abstract_function_declarator have no function name
+				-- error("find function name failed")
 			end
 			type = node:type()
 		end
 		info.name = node
+	elseif type == "operator_cast" then
+		-- do nothing, this function is abstract_function_declarator
 	else
 		error("find not support declarator type " .. type)
 	end
@@ -169,8 +178,17 @@ function M.is_func_same(origin, target)
 		return name_same, full_same
 	end
 
-	if get_node_text(origin.info.name, origin.buf) ~= get_node_text(target.info.name, target.buf) then
-		return name_same, full_same
+	if origin.info.func:type() == "abstract_function_declarator" then
+		if target.info.name ~= nil then
+			return name_same, full_same
+		end
+	else
+		if
+			target.info.name
+			and (get_node_text(origin.info.name, origin.buf) ~= get_node_text(target.info.name, target.buf))
+		then
+			return name_same, full_same
+		end
 	end
 
 	name_same = true
@@ -484,7 +502,14 @@ function M.parse_func(ctx, cache)
 	local buf = ctx.buf
 	local info = ctx.info
 
-	if info.func:field("declarator")[1]:type() == "qualified_identifier" then
+	local node
+	if info.func:type() == "abstract_function_declarator" then
+		node = info.full:field("declarator")[1]
+	else
+		node = info.func:field("declarator")[1]
+	end
+
+	if node:type() == "qualified_identifier" then
 		for _, node in ipairs(info.scope) do
 			if M.is_namespace(buf, node, cache) then
 				table.insert(info.namespace, node)
