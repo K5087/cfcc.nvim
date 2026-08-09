@@ -298,9 +298,14 @@ function M.gen_def_from_decl(ctx)
 		end
 
 		-- add const constexpr and some other type_qualifier
-		local qualifiers = info.full:field("type_qualifier")
-		for _, qualifier in ipairs(qualifiers) do
-			declaration = ts.get_node_text(qualifier, buf) .. " " .. declaration
+		if type then
+			local sibl = type:prev_sibling()
+			while sibl do
+				if sibl:type() == "type_qualifier" then
+					declaration = ts.get_node_text(sibl, buf) .. " " .. declaration
+				end
+				sibl = sibl:prev_sibling()
+			end
 		end
 	end
 
