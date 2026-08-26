@@ -373,6 +373,8 @@ function M.find_namespaces(bufnr1, names1, bufnr2, root, query, index, res)
 	if #names1 == 0 then
 		return false
 	end
+	local best_len = #res
+	local best_nodes = {}
 
 	for _, match in query:iter_matches(root, bufnr2, 0, -1) do
 		local namespace
@@ -421,16 +423,19 @@ function M.find_namespaces(bufnr1, names1, bufnr2, root, query, index, res)
 		-- go to here ,have right level prefix,but still find remain
 		if M.find_namespaces(bufnr1, names1, bufnr2, body, query, index, res) then
 			return true
-		else
-			goto back
 		end
 
 		::back::
-		for _ = 1, index - save do
-			table.remove(res)
-			index = save
+		if #res > best_len then
+			best_len = #res
+			best_nodes = vim.list_slice(res, save + 1, #res)
 		end
+		while #res > save do
+			table.remove(res)
+		end
+		index = save
 	end
+	vim.list_extend(res, best_nodes)
 	return false
 end
 
