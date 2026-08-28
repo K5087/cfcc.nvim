@@ -64,6 +64,27 @@ function M.get_root(buf)
 
 	return tree:root()
 end
+--- is node belong a func
+---@param node TSNode
+---@return bool
+local function is_func(node)
+	while node do
+		node = node:parent()
+		if not node then
+			return false
+		end
+
+		local type = node:type()
+
+		if type == "function_definition" or type == "declaration" or type == "field_declaration" then
+			return true
+		end
+
+		if type == "parameter_declaration" or type == "type_descriptor" or type == "alias_declaration" then
+			return false
+		end
+	end
+end
 
 ---search buffer all function name same
 ---@param ctx RequestContext
@@ -89,7 +110,7 @@ function M.search_functions(ctx)
 			end
 		end
 
-		if decl_node then
+		if decl_node and is_func(decl_node) then
 			local target_ctx = { buf = target.buf, info = { namespace = {}, class = {}, scope = {}, func = decl_node } }
 			M.gen_from_declarator(target_ctx.info)
 			M.parse_func(target_ctx, ctx.cache)
