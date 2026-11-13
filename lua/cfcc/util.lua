@@ -24,9 +24,13 @@ function M.get_nonblank_pos(buf)
 	local pos = api.nvim_win_get_cursor(0)
 	-- Subtract one to account for 1-based row indexing in nvim_win_get_cursor
 	local row, col = pos[1] - 1, pos[2]
-	local line = api.nvim_buf_get_lines(buf, row, row + 1, false)
-	for i = col - 1, 0, -1 do
-		if line[i] ~= " " then
+	local line = api.nvim_buf_get_lines(buf, row, row + 1, false)[1]
+	if not line then
+		return { row, col }
+	end
+	for i = col, 0, -1 do
+		local ch = line:sub(i + 1, i + 1)
+		if ch ~= " " and ch ~= "\t" then
 			return { row, i }
 		end
 	end
@@ -54,8 +58,13 @@ function M.current()
 	local info = origin.info
 	origin.buf = api.nvim_get_current_buf()
 	local pos = M.get_nonblank_pos(origin.buf)
-	local node = ts.get_node({ bufnr = origin.buf, pos = pos })
+	local parser = ts.get_parser(origin.buf)
+	if not parser then
+		error("have no parser")
+	end
+	parser:parse()
 
+	local node = ts.get_node({ bufnr = origin.buf, pos = pos })
 	local parent, type =
 		ast.find_ancestor(node, { "function_declarator", "function_definition", "declaration", "field_declaration" })
 	if not parent then

@@ -7,13 +7,13 @@ local util = require("cfcc.util")
 ---@param index integer? which action want to do
 ---@param bool boolean
 function M.code_action(index, bool)
-	local ctx = util.current()
-	-- local ok, ctx = pcall(util.current)
-	-- if not ok then
-	-- 	---@diagnostic disable-next-line: param-type-mismatch
-	-- 	vim.notify(ctx)
-	-- 	return
-	-- end
+	-- local ctx = util.current()
+	local ok, ctx = pcall(util.current)
+	if not ok then
+		---@diagnostic disable-next-line: param-type-mismatch
+		vim.notify(ctx)
+		return
+	end
 	bool = bool or false
 	if not index then
 		vim.ui.select({
