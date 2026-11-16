@@ -207,7 +207,7 @@ function M.gen_decl_from_def(ctx)
 	local info = ctx.info
 
 	local declaration = ts.get_node_text(info.full, buf)
-	local del_ranges = util.get_del_optparam_ranges(buf, info.full, info.func)
+	local del_ranges = util.get_del_node_ranges(buf, info.full, info.func)
 	table.insert(del_ranges, util.get_delete_range(buf, { last = info.func, final = info.full }, info.full))
 
 	if info.func:type() == "abstract_function_declarator" then
@@ -247,7 +247,7 @@ function M.gen_def_from_decl(ctx)
 	local info = ctx.info
 
 	local declaration = ts.get_node_text(info.full, buf)
-	local del_ranges = util.get_del_optparam_ranges(buf, info.full, info.func)
+	local del_ranges = util.get_del_node_ranges(buf, info.full, info.func)
 	table.insert(del_ranges, util.get_delete_range(buf, { last = info.func, final = info.full }, info.full))
 
 	-- delete text from line end

@@ -132,18 +132,19 @@ function M.get_delete_range(buf, scope, root)
 	}
 end
 
---- Get a array that all optional_parameter_declaration node default should delete
+--- Get a array ranges that all not allow in definition
 ---@param buf integer
 ---@param full TSNode  declaration / field_declaration / function_definition
 ---@param func TSNode function_declarator
 ---@return { s: integer, e: integer }[]
-function M.get_del_optparam_ranges(buf, full, func)
+function M.get_del_node_ranges(buf, full, func)
 	local query = ts.query.get("cpp", "optional_parameter_declaration")
 
 	if not query then
 		error("can not find optional_parameter_declaration query")
 	end
 
+	-- remove default value node
 	local del_ranges = {}
 	for _, match in query:iter_matches(full, buf, 0, -1) do
 		local param = {}
@@ -157,6 +158,17 @@ function M.get_del_optparam_ranges(buf, full, func)
 		end
 
 		table.insert(del_ranges, M.get_delete_range(buf, param, full))
+	end
+	-- remove override attribuate node
+	for _, child in ipairs(func:named_children()) do
+		if child:type() == "virtual_specifier" then
+			local prev = child:prev_named_sibling()
+			local next = child:next_named_sibling()
+			table.insert(
+				del_ranges,
+				M.get_delete_range(buf, { last = prev and prev or func, final = next and next or full }, full)
+			)
+		end
 	end
 
 	return del_ranges
